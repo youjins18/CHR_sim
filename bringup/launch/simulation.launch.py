@@ -71,7 +71,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'bag_directory',
             default_value=PathJoinSubstitution([
-                EnvironmentVariable('HOME'), 'Desktop', 'cone_harvest_sim_ws', 'src',
+                EnvironmentVariable('HOME'), 'Desktop', 'chr_sim_ws', 'src',
                 'data_logging', 'bags']),
             description='Directory that receives timestamped CHR bags'),
         Node(

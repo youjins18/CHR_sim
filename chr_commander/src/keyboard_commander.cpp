@@ -70,6 +70,22 @@ Vec3 quaternion_to_rpy(const Quaternion &input) {
     2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z));
   return {roll, pitch, yaw};
 }
+
+Quaternion rpy_to_quaternion(const Vec3 &rpy) {
+  const double cr = std::cos(0.5 * rpy[0]);
+  const double sr = std::sin(0.5 * rpy[0]);
+  const double cp = std::cos(0.5 * rpy[1]);
+  const double sp = std::sin(0.5 * rpy[1]);
+  const double cy = std::cos(0.5 * rpy[2]);
+  const double sy = std::sin(0.5 * rpy[2]);
+
+  Quaternion result;
+  result.w = cr * cp * cy + sr * sp * sy;
+  result.x = sr * cp * cy - cr * sp * sy;
+  result.y = cr * sp * cy + sr * cp * sy;
+  result.z = cr * cp * sy - sr * sp * cy;
+  return normalized(result);
+}
 }  // namespace
 
 class KeyboardCommander final : public rclcpp::Node {
@@ -82,9 +98,29 @@ class KeyboardCommander final : public rclcpp::Node {
     poll_hz_ = declare_parameter("poll_hz", 50.0);
     workspace_min_ = vector_parameter("workspace_min", {-1.5, -1.5, 0.05});
     workspace_max_ = vector_parameter("workspace_max", {1.5, 1.5, 2.5});
+    trajectory_position_amplitude_m_ = vector_parameter(
+      "trajectory.position_amplitude_m", {0.05, 0.05, 0.03});
+    trajectory_position_frequency_hz_ = vector_parameter(
+      "trajectory.position_frequency_hz", {0.10, 0.20, 0.30});
+    trajectory_position_phase_rad_ = degrees_to_radians(vector_parameter(
+      "trajectory.position_phase_deg", {0.0, 0.0, 0.0}));
+    trajectory_attitude_amplitude_rad_ = degrees_to_radians(vector_parameter(
+      "trajectory.attitude_amplitude_deg", {3.0, 3.0, 5.0}));
+    trajectory_attitude_frequency_hz_ = vector_parameter(
+      "trajectory.attitude_frequency_hz", {0.10, 0.20, 0.30});
+    trajectory_attitude_phase_rad_ = degrees_to_radians(vector_parameter(
+      "trajectory.attitude_phase_deg", {0.0, 0.0, 0.0}));
     if (translation_step_m_ <= 0.0 || rotation_step_rad_ <= 0.0 || poll_hz_ <= 0.0) {
       throw std::runtime_error("teleop step sizes and poll_hz must be positive");
     }
+    validate_nonnegative(
+      "trajectory.position_amplitude_m", trajectory_position_amplitude_m_);
+    validate_nonnegative(
+      "trajectory.position_frequency_hz", trajectory_position_frequency_hz_);
+    validate_nonnegative(
+      "trajectory.attitude_amplitude_deg", trajectory_attitude_amplitude_rad_);
+    validate_nonnegative(
+      "trajectory.attitude_frequency_hz", trajectory_attitude_frequency_hz_);
     for (std::size_t i = 0; i < 3; ++i) {
       if (workspace_min_[i] >= workspace_max_[i]) {
         throw std::runtime_error("workspace_min must be smaller than workspace_max");
@@ -122,6 +158,21 @@ class KeyboardCommander final : public rclcpp::Node {
       throw std::runtime_error(name + " must contain only finite values");
     }
     return {values[0], values[1], values[2]};
+  }
+
+  static Vec3 degrees_to_radians(const Vec3 &degrees) {
+    return {
+      degrees[0] * kPi / 180.0,
+      degrees[1] * kPi / 180.0,
+      degrees[2] * kPi / 180.0};
+  }
+
+  static void validate_nonnegative(const std::string &name, const Vec3 &values) {
+    if (!std::all_of(values.begin(), values.end(), [](double value) {
+        return value >= 0.0;
+      })) {
+      throw std::runtime_error(name + " must contain only nonnegative values");
+    }
   }
 
   void configure_terminal() {
@@ -166,6 +217,10 @@ class KeyboardCommander final : public rclcpp::Node {
   void poll_keyboard() {
     char key = 0;
     while (read(STDIN_FILENO, &key, 1) > 0) handle_key(key);
+    if (trajectory_active_ && target_initialized_) {
+      update_trajectory();
+      publish_target();
+    }
   }
 
   void handle_key(char raw_key) {
@@ -186,6 +241,14 @@ class KeyboardCommander final : public rclcpp::Node {
     }
 
     const char key = static_cast<char>(std::tolower(static_cast<unsigned char>(raw_key)));
+    if (key == 'g') {
+      toggle_trajectory();
+      return;
+    }
+    if (trajectory_active_ && is_manual_pose_key(key)) {
+      trajectory_active_ = false;
+      RCLCPP_INFO(get_logger(), "Lissajous trajectory stopped by manual command");
+    }
     bool changed = true;
     switch (key) {
       case 'w': target_pose_.position.x += translation_step_m_; break;
@@ -216,6 +279,57 @@ class KeyboardCommander final : public rclcpp::Node {
     target_pose_.orientation = product(target_pose_.orientation, axis_angle(axis, angle));
   }
 
+  static bool is_manual_pose_key(char key) {
+    switch (key) {
+      case 'w': case 's': case 'a': case 'd': case 'r': case 'f':
+      case 'i': case 'k': case 'j': case 'l': case 'u': case 'o':
+      case ' ': case '0':
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  void toggle_trajectory() {
+    if (trajectory_active_) {
+      trajectory_active_ = false;
+      publish_target();
+      RCLCPP_INFO(get_logger(), "Lissajous trajectory OFF; holding current target");
+      print_target();
+      return;
+    }
+
+    trajectory_center_pose_ = target_pose_;
+    trajectory_center_rpy_ = quaternion_to_rpy(trajectory_center_pose_.orientation);
+    trajectory_start_time_ = now();
+    trajectory_active_ = true;
+    RCLCPP_INFO(get_logger(), "Lissajous trajectory ON (press G again to hold)");
+  }
+
+  void update_trajectory() {
+    const double elapsed_s = std::max(0.0, (now() - trajectory_start_time_).seconds());
+    Vec3 position{
+      trajectory_center_pose_.position.x,
+      trajectory_center_pose_.position.y,
+      trajectory_center_pose_.position.z};
+    Vec3 rpy = trajectory_center_rpy_;
+
+    for (std::size_t i = 0; i < 3; ++i) {
+      position[i] += trajectory_position_amplitude_m_[i] * std::sin(
+        2.0 * kPi * trajectory_position_frequency_hz_[i] * elapsed_s +
+        trajectory_position_phase_rad_[i]);
+      rpy[i] += trajectory_attitude_amplitude_rad_[i] * std::sin(
+        2.0 * kPi * trajectory_attitude_frequency_hz_[i] * elapsed_s +
+        trajectory_attitude_phase_rad_[i]);
+    }
+
+    target_pose_.position.x = position[0];
+    target_pose_.position.y = position[1];
+    target_pose_.position.z = position[2];
+    target_pose_.orientation = rpy_to_quaternion(rpy);
+    clamp_position();
+  }
+
   void clamp_position() {
     target_pose_.position.x = std::clamp(
       target_pose_.position.x, workspace_min_[0], workspace_max_[0]);
@@ -239,6 +353,7 @@ class KeyboardCommander final : public rclcpp::Node {
       "\nCHR TCP teleop (local TCP attitude axes)\n"
       "  position: W/S +X/-X, A/D +Y/-Y, R/F +Z/-Z\n"
       "  attitude: I/K +roll/-roll, J/L +pitch/-pitch, U/O +yaw/-yaw\n"
+      "  G: toggle XYZ/RPY Lissajous trajectory\n"
       "  Space: hold measured pose, 0: startup pose, P: print, ?: help, Q/Esc: quit\n"
       "  steps: %.3f m, %.1f deg",
       translation_step_m_, rotation_step_rad_ * 180.0 / kPi);
@@ -257,15 +372,25 @@ class KeyboardCommander final : public rclcpp::Node {
   bool enabled_{true};
   bool terminal_configured_{false};
   bool target_initialized_{false};
+  bool trajectory_active_{false};
   double translation_step_m_{0.01};
   double rotation_step_rad_{0.0523598776};
   double poll_hz_{50.0};
   Vec3 workspace_min_{-1.5, -1.5, 0.05};
   Vec3 workspace_max_{1.5, 1.5, 2.5};
+  Vec3 trajectory_position_amplitude_m_{0.05, 0.05, 0.03};
+  Vec3 trajectory_position_frequency_hz_{0.10, 0.20, 0.30};
+  Vec3 trajectory_position_phase_rad_{0.0, 0.0, 0.0};
+  Vec3 trajectory_attitude_amplitude_rad_{0.0523598776, 0.0523598776, 0.0872664626};
+  Vec3 trajectory_attitude_frequency_hz_{0.10, 0.20, 0.30};
+  Vec3 trajectory_attitude_phase_rad_{0.0, 0.0, 0.0};
+  Vec3 trajectory_center_rpy_{0.0, 0.0, 0.0};
   termios original_terminal_{};
   geometry_msgs::msg::Pose target_pose_;
   geometry_msgs::msg::Pose measured_pose_;
   geometry_msgs::msg::Pose home_pose_;
+  geometry_msgs::msg::Pose trajectory_center_pose_;
+  rclcpp::Time trajectory_start_time_;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr target_publisher_;
   rclcpp::Subscription<chr_msgs::msg::ChrState>::SharedPtr state_subscriber_;
   rclcpp::TimerBase::SharedPtr timer_;

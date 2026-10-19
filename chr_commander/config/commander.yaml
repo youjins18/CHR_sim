@@ -6,3 +6,14 @@ chr_keyboard_commander:
     poll_hz: 50.0
     workspace_min: [-10.0, -10.0, -20.0]
     workspace_max: [10.0, 10.0, 20.0]
+
+    # G 키를 누른 순간의 desired pose를 중심으로 생성되는 Lissajous 궤적.
+    # 각 배열의 순서는 position은 [x, y, z], attitude는 [roll, pitch, yaw].
+    trajectory:
+      position_amplitude_m: [0.05, 0.05, 0.03]
+      position_frequency_hz: [0.5, 0.10, 0.15]
+      position_phase_deg: [0.0, 0.0, 0.0]
+      # attitude_amplitude_deg: [3.0, 3.0, 5.0]
+      attitude_amplitude_deg: [0.0, 0.0, 0.0]
+      attitude_frequency_hz: [0.10, 0.20, 0.30]
+      attitude_phase_deg: [0.0, 0.0, 0.0]

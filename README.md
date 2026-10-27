@@ -3,6 +3,9 @@
 ROS 2 Humble and MuJoCo simulation of a Palletrone carrying a three-joint
 cone-harvesting arm.
 
+한국어 설치·구동·수정 안내는 [`SIMULATION_MANUAL_KO.md`](SIMULATION_MANUAL_KO.md)를
+참조하십시오.
+
 ## Architecture
 
 | Package | Owns |

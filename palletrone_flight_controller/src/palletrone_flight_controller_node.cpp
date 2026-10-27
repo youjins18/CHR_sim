@@ -18,6 +18,12 @@ namespace {
 using Vec3 = std::array<double, 3>;
 using Vec4 = std::array<double, 4>;
 
+// Controller estimates include sub-percent uncertainty relative to the measured
+// MuJoCo plant (5.874 kg, 0.230 m, 0.018 N m/N). The plant remains unchanged.
+constexpr double kEstimatedMassKg = 5.90;
+constexpr double kEstimatedRotorRadiusM = 0.229;
+constexpr double kEstimatedReactionTorqueCoefficient = 0.0181;
+
 Vec3 add(const Vec3 &a, const Vec3 &b) {
   return {a[0] + b[0], a[1] + b[1], a[2] + b[2]};
 }
@@ -97,7 +103,7 @@ class PalletroneFlightController final : public rclcpp::Node {
  public:
   PalletroneFlightController() : Node("palletrone_flight_controller") {
     control_hz_ = declare_parameter("control_hz", 250.0);
-    mass_kg_ = declare_parameter("mass_kg", 5.874);
+    mass_kg_ = declare_parameter("mass_kg", kEstimatedMassKg);
     gravity_ = declare_parameter("gravity", 9.81);
     position_kp_ = vector_parameter("position_kp", {4.0, 4.0, 7.0});
     position_ki_ = vector_parameter("position_ki", {0.05, 0.05, 0.2});
@@ -112,8 +118,9 @@ class PalletroneFlightController final : public rclcpp::Node {
     dob_gain_ = vector_parameter("dob_gain", {0.0, 0.0, 0.0});
     dob_enabled_ = declare_parameter("dob_enabled", false);
     dob_cutoff_hz_ = declare_parameter("dob_cutoff_hz", 8.0);
-    rotor_radius_m_ = declare_parameter("rotor_radius_m", 0.23);
-    reaction_coefficient_ = declare_parameter("reaction_torque_coefficient", 0.018);
+    rotor_radius_m_ = declare_parameter("rotor_radius_m", kEstimatedRotorRadiusM);
+    reaction_coefficient_ = declare_parameter(
+      "reaction_torque_coefficient", kEstimatedReactionTorqueCoefficient);
     minimum_thrust_n_ = declare_parameter("minimum_thrust_n", 0.5);
     maximum_thrust_n_ = declare_parameter("maximum_thrust_n", 38.52);
     maximum_servo_angle_rad_ = declare_parameter("maximum_servo_angle_rad", 0.7);
@@ -345,11 +352,11 @@ class PalletroneFlightController final : public rclcpp::Node {
   }
 
   double control_hz_{250.0};
-  double mass_kg_{5.874};
+  double mass_kg_{kEstimatedMassKg};
   double gravity_{9.81};
   double dob_cutoff_hz_{8.0};
-  double rotor_radius_m_{0.23};
-  double reaction_coefficient_{0.018};
+  double rotor_radius_m_{kEstimatedRotorRadiusM};
+  double reaction_coefficient_{kEstimatedReactionTorqueCoefficient};
   double minimum_thrust_n_{0.5};
   double maximum_thrust_n_{38.52};
   double maximum_servo_angle_rad_{0.7};

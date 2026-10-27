@@ -1,7 +1,10 @@
 palletrone_flight_controller:
   ros__parameters:
     control_hz: 250.0
-    mass_kg: 5.874
+    # Controller-side estimates intentionally differ slightly from the measured
+    # MuJoCo plant: mass +0.44%, rotor radius -0.43%, reaction coefficient +0.56%.
+    # Keep the MJCF model unchanged when tuning this small model uncertainty.
+    mass_kg: 5.90
     gravity: 9.81
     position_kp: [4.0, 4.0, 7.0]
     position_ki: [0.05, 0.05, 0.20]
@@ -12,11 +15,11 @@ palletrone_flight_controller:
     attitude_kd: [2.0, 2.0, 1.2]
     attitude_integral_limit: [0.5, 0.5, 0.5]
     inertia_diagonal_kg_m2: [0.18, 0.18, 0.20]
-    dob_enabled: false
-    dob_cutoff_hz: 8.0
+    dob_enabled: true
+    dob_cutoff_hz: 1.0                # [hz]
     dob_gain: [1.0, 1.0, 1.0]
-    rotor_radius_m: 0.23
-    reaction_torque_coefficient: 0.018
+    rotor_radius_m: 0.229
+    reaction_torque_coefficient: 0.0181
     minimum_thrust_n: 0.5
     maximum_thrust_n: 38.52
     maximum_servo_angle_rad: 0.7
